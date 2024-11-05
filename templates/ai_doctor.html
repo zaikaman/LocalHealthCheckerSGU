@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bác Sĩ AI</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.1.3/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        body {
+            background-color: #f5f8fa;
+            font-family: Arial, sans-serif;
+        }
+        .container {
+            max-width: 600px;
+            margin-top: 50px;
+            padding: 20px;
+            background-color: #fff;
+            border-radius: 10px;
+            box-shadow: 0px 4px 10px rgba(0, 0, 0, 0.1);
+            text-align: center;
+        }
+        .microphone {
+            margin-top: 20px;
+            cursor: pointer;
+        }
+        .microphone img {
+            width: 100px;
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar navbar-light bg-light">
+        <div class="container-fluid">
+            <a class="navbar-brand" href="#">Bác Sĩ AI</a>
+            <a href="{{ url_for('health_analysis') }}" class="btn btn-outline-secondary">Phân Tích Sức Khỏe Dựa Trên Thể Trạng</a>
+            <a href="{{ url_for('index') }}" class="btn btn-outline-secondary ms-2">Phân Tích Sức Khỏe Dựa Trên Hồ Sơ Y Tế</a>
+            {% if session.username %}
+                <a href="{{ url_for('logout') }}" class="btn btn-outline-danger">Đăng Xuất</a>
+            {% else %}
+                <a href="{{ url_for('login') }}" class="btn btn-outline-primary">Đăng Nhập</a>
+            {% endif %}
+        </div>
+    </nav>
+
+    <div class="container">
+        <h1>Chào mừng bạn đến với Bác Sĩ AI</h1>
+        <p>Nhấn vào hình microphone để bắt đầu thu âm.</p>
+    
+        <!-- Placeholder for image or video -->
+        <div id="mediaDisplay" class="media-container" style="width: 150px; height: 150px; overflow: hidden; position: relative;">
+            <img id="staticImage" src="https://i.ibb.co/qnzGV3N/image.png" alt="image" border="0" 
+                class="media-content active" style="width: 100%; height: 100%; object-fit: cover;">
+        </div>
+    
+        <div class="microphone" onclick="toggleRecording()">
+            <img id="microphoneImg" src="https://i.ibb.co/jrmcV0r/products-2-FS10-SM058-LC-2-FS10-SM058-LC-1710120244820-1200x1200-removebg-preview.png" alt="Microphone" style="width: 50px; height: auto; cursor: pointer;">
+        </div>
+    
+        <p id="statusMessage"></p>
+        <div id="analysisResult"></div>
+    
+        <audio id="audioPlayer" controls onplay="toggleMediaDisplay('video')" onpause="toggleMediaDisplay('image')" onended="toggleMediaDisplay('image')"></audio>
+    </div>
+    
+    <style>
+        /* Media container styling */
+        .media-container {
+            width: 150px;
+            height: 150px;
+            position: relative;
+            margin: 0 auto; /* Center the media container */
+            overflow: hidden;
+        }
+    
+        /* Common media content styling */
+        .media-content {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            opacity: 0;
+            transition: opacity 0.5s ease; /* Smooth transition */
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+    
+        /* Active class for the visible content */
+        .media-content.active {
+            opacity: 1;
+        }
+    </style>    
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/bootstrap/5.1.3/js/bootstrap.bundle.min.js"></script>
+    <script>
+        let isRecording = false;
+        let mediaRecorder;
+        let audioChunks = [];
+    
+        // Function to start or stop recording
+        async function toggleRecording() {
+            if (!isRecording) {
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    // Specify the desired audio format. 'audio/webm' is more widely supported
+                    mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/mp4' });
+                    mediaRecorder.ondataavailable = event => audioChunks.push(event.data);
+                    mediaRecorder.onstop = async () => {
+                        const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                        audioChunks = [];
+                        await analyzeAudioWithGemini(audioBlob);
+                    };
+                    mediaRecorder.start();
+                    isRecording = true;
+                    document.getElementById("microphoneImg").style.border = "3px solid red";
+                    document.getElementById("statusMessage").innerText = "Đang ghi âm... Nhấn lại để dừng.";
+                } catch (error) {
+                    console.error('Trình duyệt không có quyền truy cập microphone:', error);
+                    document.getElementById("statusMessage").innerText = "Lỗi: Không thể truy cập microphone.";
+                }
+            } else {
+                mediaRecorder.stop();
+                isRecording = false;
+                document.getElementById("microphoneImg").style.border = "";
+                document.getElementById("statusMessage").innerText = "Đang phân tích...";
+            }
+        }
+
+        // Function to send audio to the server for analysis
+        async function analyzeAudioWithGemini(audioBlob) {
+            const formData = new FormData();
+            formData.append("audio", audioBlob, "recording.webm"); // Use 'recording.webm' as the filename
+
+            const response = await fetch("/analyze_audio", {
+                method: "POST",
+                body: formData
+            });
+
+            if (response.ok) {
+                const data = await response.json();
+                console.log("Gemini response:", data);
+
+                const cleanedResult = data.result.replace(/\*/g, "");
+                document.getElementById("statusMessage").innerText = "";
+
+                // Play audio if the URL is provided
+                if (data.audio_url) {
+                    const audioPlayer = document.getElementById("audioPlayer");
+                    audioPlayer.src = data.audio_url;
+                    audioPlayer.play().catch((error) => {
+                        console.log("Autoplay was prevented:", error);
+                    });
+                }
+            } else {
+                console.error("Lỗi khi gửi audio đến server:", response.statusText);
+                document.getElementById("statusMessage").innerText = "Lỗi: Không thể phân tích âm thanh.";
+                document.getElementById("analysisResult").innerHTML = "";
+            }
+        }
+    
+        function toggleMediaDisplay(type) {
+            const mediaDisplay = document.getElementById("mediaDisplay");
+
+            // Clear existing content smoothly
+            const existingMedia = mediaDisplay.querySelector(".media-content.active");
+            if (existingMedia) {
+                existingMedia.classList.remove("active");
+                // Wait for the fade-out transition to complete before replacing the content
+                setTimeout(() => {
+                    mediaDisplay.innerHTML = getMediaContent(type);
+                    const newMedia = mediaDisplay.querySelector(".media-content");
+                    if (newMedia) {
+                        newMedia.classList.add("active");
+                    }
+                }, 500); // Delay matching the transition duration (0.5s)
+            } else {
+                mediaDisplay.innerHTML = getMediaContent(type);
+                const newMedia = mediaDisplay.querySelector(".media-content");
+                if (newMedia) {
+                    newMedia.classList.add("active");
+                }
+            }
+        }
+
+        function getMediaContent(type) {
+            if (type === "video") {
+                return `
+                    <div style="position: relative; width: 100%; height: 100%; overflow: hidden;">
+                        <iframe class="media-content active" allow="fullscreen; autoplay" allowfullscreen 
+                            src="https://streamable.com/e/5iv02h?autoplay=1&muted=1&nocontrols=1" 
+                            style="width: 100%; height: 100%; object-fit: cover;">
+                        </iframe>
+                    </div>`;
+            } else {
+                return `
+                    <img id="staticImage" src="https://i.ibb.co/qnzGV3N/image.png" alt="image" border="0" 
+                        class="media-content active" style="width: 100%; height: 100%; object-fit: cover;">`;
+            }
+        }
+    </script>    
+</body>
+</html>
